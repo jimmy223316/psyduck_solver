@@ -38,7 +38,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from model_rl import ActorCriticCNN, load_bc_weights
 from env_rl import PuzzleRLEnv
 
-
+torch.set_float32_matmul_precision('high')
 # =========================================================
 # Rollout Buffer
 # =========================================================
@@ -200,8 +200,8 @@ def ppo_update(model:         ActorCriticCNN,
             surrogate2  = torch.clamp(ratio, 1 - clip_epsilon, 1 + clip_epsilon) * b_adv
             pg_loss     = -torch.min(surrogate1, surrogate2).mean()
 
-            # Value Loss（L_VALUE = MSE）
-            value_loss  = nn.functional.mse_loss(new_value, b_returns)
+            # Value Loss（L_VALUE，採用 Huber Loss / SmoothL1 以增強對極端 Advantage 的魯棒性）
+            value_loss  = nn.functional.smooth_l1_loss(new_value, b_returns)
 
             # Entropy Bonus（鼓勵探索）
             entropy_loss = -entropy.mean()
@@ -277,8 +277,14 @@ def main(args):
 
     # 初始 reset
     curriculum_stage = "easy"
-    env.set_curriculum(curriculum_stage)
-    obs     = env.reset()
+    if args.focus_size > 0:
+        env.reset(n=args.focus_size)  # 強制指定尺寸
+        print(f"  🎯 模式：指定尺寸訓練 (N={args.focus_size})")
+    else:
+        env.set_curriculum(curriculum_stage)
+        print(f"  📈 模式：Curriculum Learning 起始: {curriculum_stage} ({env.sizes})")
+    
+    obs     = env.reset(n=args.focus_size if args.focus_size > 0 else None)
     ep_reward = 0.0
 
     print(f"\n{'='*70}")
@@ -291,9 +297,6 @@ def main(args):
 
     for update in range(1, args.total_updates + 1):
         # ---- 0. 評論家預熱 (Critic Warm-up) ----
-        # 在初期階段，全新的 Critic 網路估計的 Advantage 會非常不準確，
-        # 如果一開始就全面更新，會導致原本很好的 Actor 被帶偏（策略崩潰）。
-        # 因此，在預熱期間，我們凍結 Backbone 和 Actor 的梯度，只允許更新 Critic。
         is_warmup = update <= args.warmup_updates
         for name, param in model.named_parameters():
             if "critic_head" not in name:
@@ -304,19 +307,20 @@ def main(args):
         elif not is_warmup and update == args.warmup_updates + 1:
             print(f"  🔓 解除凍結：預熱結束，Actor 權重加入訓練！")
 
-        # ---- Curriculum 調整 ----
-        progress = update / args.total_updates
-        if progress < 0.30:
-            stage = "easy"
-        elif progress < 0.70:
-            stage = "medium"
-        else:
-            stage = "hard"
+        # ---- Curriculum 調整 (若非 focus_size 模式) ----
+        if args.focus_size == 0:
+            progress = update / args.total_updates
+            if progress < 0.30:
+                stage = "easy"
+            elif progress < 0.70:
+                stage = "medium"
+            else:
+                stage = "hard"
 
-        if stage != curriculum_stage:
-            curriculum_stage = stage
-            env.set_curriculum(stage)
-            print(f"  📈 課程升級 → {stage} ({env.sizes})")
+            if stage != curriculum_stage:
+                curriculum_stage = stage
+                env.set_curriculum(stage)
+                print(f"  📈 課程升級 → {stage} ({env.sizes})")
 
         # ---- A. 收集 Rollout ----
         buffer.clear()
@@ -360,7 +364,7 @@ def main(args):
                 if len(recent_rewards) > 100:
                     recent_rewards.pop(0)
                 ep_reward = 0.0
-                obs = env.reset()
+                obs = env.reset(n=args.focus_size if args.focus_size > 0 else None)
 
         # ---- B. 計算最後一步的 V(s_T+1) ----
         with torch.no_grad():
@@ -463,15 +467,16 @@ if __name__ == "__main__":
     parser.add_argument("--rollout_steps",  type=int,   default=2048,                help="每次收集步數")
     parser.add_argument("--ppo_epochs",     type=int,   default=4,                   help="每批資料 PPO 更新次數")
     parser.add_argument("--mini_batch_size",type=int,   default=256,                 help="Mini-batch 大小")
-    parser.add_argument("--gamma",          type=float, default=0.99,                help="折扣因子")
+    parser.add_argument("--gamma",          type=float, default=0.999,               help="折扣因子 (調高以支援長期規劃)")
     parser.add_argument("--gae_lambda",     type=float, default=0.95,                help="GAE lambda")
     parser.add_argument("--clip_epsilon",   type=float, default=0.1,                 help="PPO clip 範圍 (保險起見收緊為 0.1)")
-    parser.add_argument("--value_coef",     type=float, default=0.5,                 help="Critic Loss 係數")
-    parser.add_argument("--entropy_coef",   type=float, default=0.001,               help="Entropy Bonus 係數 (因已有完美 BC，調降為極小值)")
+    parser.add_argument("--value_coef",     type=float, default=1.0,                 help="Critic Loss 係數 (調高以強化價值預算)")
+    parser.add_argument("--entropy_coef",   type=float, default=0.02,                help="Entropy Bonus 係數 (調高以挽救探索能力，解決死迴圈)")
     parser.add_argument("--max_grad_norm",  type=float, default=0.5,                 help="梯度裁剪上限")
     parser.add_argument("--actor_lr",       type=float, default=5e-6,                help="Actor (預訓練) 學習率（極小）")
     parser.add_argument("--critic_lr",      type=float, default=3e-4,                help="Critic (全新) 學習率（較大）")
     parser.add_argument("--warmup_updates", type=int,   default=15,                  help="Critic 預熱階段的更新次數")
+    parser.add_argument("--focus_size",     type=int,   default=3,                   help="強制指定單一尺寸進行訓練 (0=使用 Curriculum)")
     parser.add_argument("--weight_decay",   type=float, default=1e-4,                help="Weight Decay")
     parser.add_argument("--log_interval",   type=int,   default=10,                  help="每隔幾次 update 印日誌")
     parser.add_argument("--max_time_hours", type=float, default=2.0,                   help="最大訓練時間 (小時)，0=無限")

@@ -111,26 +111,34 @@ class PuzzleRLEnv:
         self.state = self.env.get_state()
         self.step_count += 1
 
-        # 計算各項 reward
-        curr_manhattan = self._manhattan(self.state, self.n)
+        # ---- 修改：密集獎勵邏輯 (Manhattan Progress) ----
+        curr_manhattan = self._calculate_manhattan()
+        diff = self.prev_manhattan - curr_manhattan
+        
+        # 1. 基礎時間懲罰 (強迫縮短步數)
+        step_penalty = -1.0
+        
+        # 2. 進度獎勵 (引導正確方向，但不能過強導致 AI 不敢暫時繞路)
+        if diff > 0:
+            progress_reward = 0.2    # 離目標更近
+        elif diff < 0:
+            progress_reward = -0.2   # 離目標更遠
+        else:
+            progress_reward = 0.0
 
-        # 進度獎勵：曼哈頓距離縮短 → 正獎勵
-        progress = (self.prev_manhattan - curr_manhattan) * 0.5
         self.prev_manhattan = curr_manhattan
-
-        step_penalty = -0.1          # 每步固定扣分
+        reward = step_penalty + progress_reward
 
         done    = False
-        reward  = step_penalty + progress
         success = False
 
         if self.env.is_solved():
-            # 過關！獎勵要夠大才能蓋過累積的 step penalty
-            reward  += 100.0
+            # 過關大獎
+            reward  += 200.0
             done    = True
             success = True
         elif self.step_count >= self.max_steps:
-            # 超時
+            # 超時懲罰
             reward -= 10.0
             done    = True
 
@@ -141,6 +149,19 @@ class PuzzleRLEnv:
             "manhattan": curr_manhattan,
         }
         return self._encode(self.state, self.n), reward, done, info
+
+    def _calculate_manhattan(self) -> int:
+        """
+        計算當前盤面的總曼哈頓距離（實例方法版）。
+        """
+        total = 0
+        for idx, v in enumerate(self.state):
+            if v == 0:
+                continue
+            curr_r, curr_c = idx // self.n, idx % self.n
+            goal_r, goal_c = (v - 1) // self.n, (v - 1) % self.n
+            total += abs(curr_r - goal_r) + abs(curr_c - goal_c)
+        return total
 
     def get_legal_actions(self) -> list:
         """回傳當前合法動作清單（不會撞牆的方向）。"""
