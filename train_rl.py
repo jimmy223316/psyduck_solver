@@ -382,6 +382,14 @@ def main(args):
 
         # ---- D. PPO 梯度更新 ----
         model.train()
+        
+        # 🚧【神級修復】：強制凍結所有 BatchNorm 層的統計數據！
+        # 即使呼叫了 model.train()，我們也必須讓 BN 層保持 eval 模式，
+        # 否則強化學習的新資料分佈會瞬間摧毀 BC 預訓練好的特徵提取能力。
+        for module in model.modules():
+            if isinstance(module, nn.BatchNorm2d):
+                module.eval()
+                
         stats = ppo_update(
             model            = model,
             optimizer        = optimizer,

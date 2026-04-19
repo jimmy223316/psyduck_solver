@@ -41,11 +41,11 @@ class PuzzleRLEnv:
         prev_manhattan : 上一步的曼哈頓距離（用於計算進度獎勵）
     """
 
-    # RL 訓練使用的尺寸範圍（不碰 10~12，BC 已夠好）
+    # RL 訓練使用的尺寸範圍（現在只針對 3x3 進行訓練）
     CURRICULUM = {
-        "easy":   [3, 4, 5],
-        "medium": [4, 5, 6, 7],
-        "hard":   [5, 6, 7, 8, 9],
+        "easy":   [3],
+        "medium": [3],
+        "hard":   [3],
     }
 
     def __init__(self, sizes: list = None):
