@@ -29,10 +29,19 @@
 pip install torch numpy selenium tqdm opencv-python
 ```
 
-### 2. 啟動訓練 / Training
+### 2. 資料生成與模仿學習 / Data & Imitation Learning
 ```bash
-# 針對 3x3 盤面進行強化學習微調
-python train_rl.py --focus_size 3 --total_updates 3000
+# 生成專家經驗資料集 (dataset.pt)
+python generate_data.py --games 1000 --sizes 3 4 5
+
+# 進行行為複製 (BC) 訓練
+python train.py --data_path dataset.pt --epochs 100
+```
+
+### 3. 強化學習微調 / RL Fine-tuning
+```bash
+# 讀取 BC 權重並針對 3x3 盤面進行 PPO 微調
+python train_rl.py --bc_model best_model.pth --focus_size 3 --total_updates 3000
 ```
 
 ### 3. 展示與執行 / Execution

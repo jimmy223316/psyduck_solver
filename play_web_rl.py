@@ -6,7 +6,7 @@ from collections import deque
 # 引入你的環境與工具
 from manual_solver import WebPuzzleEnv  
 from generate_data import encode_state
-from env import ACTION_DELTAS
+from env_rl import ACTION_DELTAS
 
 # 引入全新的 RL 大腦
 from model_rl import ActorCriticCNN
